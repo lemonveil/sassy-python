@@ -1,0 +1,143 @@
+source .venv/bin/activate
+# Import FastAPI framework (to build the web server and API)
+from fastapi import FastAPI, Body
+
+# Pydantic is used for defining data models and validating input
+from pydantic import BaseModel
+
+# Optional means a value can be None
+from typing import Optional
+
+# We'll use random to generate random quiz scores (just for fun now)
+import random
+
+# Create the FastAPI app instance (this is our "server")
+app = FastAPI(title="Sassy Python")
+
+# ----------------------------
+# 1. Define what kind of data we expect when someone calls our API
+# ----------------------------
+class ChatRequest(BaseModel):
+    mode: str              # This tells us what the user wants: "ask", "code", or "quiz"
+    content: Optional[str] = None   # This is the question or code the user sends (can be empty)
+
+# ----------------------------
+# 2. A helper function that creates a "sassy" response
+# ----------------------------
+def sassy_reply(mode: str, content: str):
+    """
+    This function is the brain of our API for now.
+    It checks which 'mode' the user asked for and gives a different kind of reply.
+    """
+
+    if mode == "ask":
+        # If user wants to 'ask' a question (like "What is a Python decorator?")
+        return f"Ugh, fine. Here's your answer: '{content}' is basically obvious, but okay..."
+
+    elif mode == "code":
+        # If user sends code, we pretend to 'analyze' it
+        return f"Your code smells... Let me explain why: {content[:50]}..."  # only show first 50 chars
+
+    elif mode == "quiz":
+        # If user wants a quiz, we return a question, a hint, and a fake score
+        question = f"What is the output of `print(2+2)`?"
+        return {
+            "question": question,
+            "hint": "Come on, even my pet snake knows this.",
+            "score": random.randint(0, 10)  # Random score between 0 and 10
+        }
+
+    else:
+        # If mode is not recognized
+        return "Pick a mode: ask, code, or quiz. Duh."
+
+# ----------------------------
+# 3. Define the /chat API endpoint
+# ----------------------------
+@app.post("/chat")
+async def chat(req: ChatRequest):
+    """
+    When someone sends a POST request to /chat, this function runs.
+    - It takes the user input (mode + content),
+    - Sends it to sassy_reply(),
+    - And returns the final response.
+    """
+
+    response = sassy_reply(req.mode, req.content or "")
+    # `req.content or ""` means: if content is None, use an empty string.
+
+    return {
+        "mode": req.mode,  # Echo back which mode was used
+        "reply": response, # Whatever sassy_reply returned
+        "score": response.get("score") if isinstance(response, dict) else None,
+        "hint": response.get("hint") if isinstance(response, dict) else None
+    }
+
+-------------------------------
+--------------------------------
+
+# Import the Streamlit library for building our simple web UI
+import streamlit as st
+
+# Import requests to call our FastAPI backend endpoint
+import requests
+
+# The FastAPI /chat endpoint URL (running on your local machine)
+API_URL = "http://127.0.0.1:8000/chat"
+
+# Set the page title, icon, and layout
+st.set_page_config(page_title="Sassy Python", page_icon="🐍", layout="centered")
+
+# Big title at the top of the page
+st.title("🐍 Sassy Python – AI Tutor & Roaster")
+
+# ---------------------------
+# 1. Mode Selector
+# ---------------------------
+# Dropdown menu for the user to choose:
+#   ask  -> normal Q&A
+#   code -> analyze code
+#   quiz -> quiz mode
+mode = st.selectbox("Choose Mode:", ["ask", "code", "quiz"])
+
+# ---------------------------
+# 2. Input Text Area
+# ---------------------------
+# A text box where the user can type a question or paste code
+# Height=150 means it shows a few lines at once (bigger box)
+user_input = st.text_area("Your Question / Code:", height=150)
+
+# ---------------------------
+# 3. Send Button
+# ---------------------------
+# When this button is clicked, the below code runs
+if st.button("Send"):
+    # If user didn’t type anything, show a warning
+    if not user_input.strip():
+        st.warning("Please type something first!")
+    else:
+        # Show a little spinner ("Thinking...") while waiting for backend
+        with st.spinner("Thinking..."):
+            # Prepare the data payload to send to FastAPI
+            payload = {"mode": mode, "content": user_input}
+            try:
+                # Send POST request to FastAPI
+                response = requests.post(API_URL, json=payload)
+
+                # Convert the response to JSON
+                data = response.json()
+
+                # ---------------------------
+                # 4. Show Results
+                # ---------------------------
+                if mode == "quiz":
+                    # If quiz mode, show the question + hint + score
+                    st.success(f"**Question:** {data['reply']['question']}")
+                    st.info(f"**Hint:** {data['reply']['hint']} (Score: {data['reply']['score']})")
+                else:
+                    # For ask/code, just show the reply
+                    st.success(f"**Response:** {data['reply']}")
+
+            except Exception as e:
+                # If something went wrong (server not running, etc.)
+                st.error(f"Error: {e}")
