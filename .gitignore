@@ -1,0 +1,10 @@
+# Ignore virtual environment and env files
+.venv/
+.env
+__pycache__/
+*.pyc
+
+# Allow everything else
+!*.py
+!.gitignore
+!README.md
