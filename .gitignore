@@ -3,6 +3,8 @@
 .env
 __pycache__/
 *.pyc
+.idea/
+notes
 
 # Allow everything else
 !*.py
