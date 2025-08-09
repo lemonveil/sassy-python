@@ -1,54 +1,110 @@
-from fastapi import FastAPI,HTTPException
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-import json
-import openai
-import os
 from dotenv import load_dotenv
 from openai import OpenAI
+import os
+import json
 import re
-from pydantic import BaseModel
+
+# --- Config ---
+load_dotenv()
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+MODEL_GENERAL = "gpt-3.5-turbo"
+MODEL_QUIZ = "gpt-4"
+TEMP_GENERAL = 0.8
+TEMP_QUIZ = 0.9
+
+# --- FastAPI App ---
+app = FastAPI(title="Sassy Python")
+
+# --- Request Models ---
+class ChatRequest(BaseModel):
+    mode: str  # "ask", "code", or "quiz"
+    content: Optional[str] = None
 
 class RoastRequest(BaseModel):
     question: str
     user_answer: str
     correct_answer: str
 
-app = FastAPI(title="Sassy Python")
+# --- Helpers ---
+def extract_json(text: str) -> str:
+    """Extract the first JSON object from text."""
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    return match.group(0) if match else text
 
-load_dotenv()
-print("Key is:", os.getenv("OPENAI_API_KEY"))
-# openai.api_key = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+def validate_quiz_json(raw_json: str):
+    """Validate quiz JSON structure and return safe version if invalid."""
+    fallback = {
+        "question": "Oops, my sass broke the quiz format. Try again?",
+        "code": None,
+        "options": ["Python", "Monty", "Coffee", "I give up"],
+        "answer": 0,
+        "hint": "I need a reboot... or coffee.",
+        "score": 1
+    }
+    try:
+        raw_json = extract_json(raw_json)
+        quiz = json.loads(raw_json)
 
-# Request model
-class ChatRequest(BaseModel):
-    mode: str  # ask, code, quiz
-    content: Optional[str] = None
+        required_keys = ["question", "options", "answer", "hint", "score"]
+        if not all(key in quiz for key in required_keys):
+            return fallback
 
-def generate_prompt(mode, content):
-    if mode == "ask":
-        return f"Explain this in a snarky tone: {content}"
-    elif mode == "code":
-        return f"Roast this code and then explain it: {content}"
-    else:
-        return "Say something witty."
+        if not isinstance(quiz["options"], list) or not all(isinstance(opt, str) for opt in quiz["options"]):
+            return fallback
+        if not isinstance(quiz["answer"], int):
+            return fallback
+        if not isinstance(quiz["score"], int):
+            return fallback
 
+        # Optional: ensure 'code' is None or str
+        if "code" in quiz and not (quiz["code"] is None or isinstance(quiz["code"], str)):
+            quiz["code"] = None
 
-load_dotenv()  # Load .env variables into environment
-openai.api_key = os.getenv("OPENAI_API_KEY")  # Assign to OpenAI SDK
+        return quiz
+    except Exception:
+        return fallback
 
-# Mock AI responses (we'll replace with OpenAI later)
+def _chat(model: str, prompt: str, temperature: float, max_tokens: int = 200) -> str:
+    """Query OpenAI API and return clean text."""
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=temperature,
+        max_tokens=max_tokens
+    )
+    return response.choices[0].message.content.strip()
+
+# --- Core Functions ---
 def sassy_reply(mode: str, content: str):
+    """Generate a sassy AI reply depending on mode."""
+    if mode in ["ask", "code"] and not content:
+        return "You forgot to give me something to sass about."
+
     if mode == "ask":
         prompt = f"""
-        You are Sassy Python, an AI tutor with attitude. You explain Python concepts like you're smarter than everyone, but you're also actually helpful.
+        You are Sassy Python, an AI tutor with attitude.
+        Explain this Python concept in a sarcastic, confident tone.
+        Give a real, concise answer with an example if useful (max 150 words).
 
-        User asked:
+        Question:
         {content}
-
-        Respond in a snarky, confident tone. Give a real, clear answer with an example if useful. Keep it under 150 words. Make them *feel* dumb but walk away smarter.
         """
+        return _chat(MODEL_GENERAL, prompt, TEMP_GENERAL)
+
+    elif mode == "code":
+        prompt = f"""
+        You are Sassy Python, an overconfident AI tutor.
+        Roast this code first in a sarcastic tone, then give a short, clear explanation for a beginner.
+
+        Code:
+        {content}
+        """
+        return _chat(MODEL_GENERAL, prompt, TEMP_GENERAL)
+
     elif mode == "quiz":
         prompt = """
         You are Sassy Python, an AI that generates fun Python quiz questions.
@@ -75,73 +131,46 @@ def sassy_reply(mode: str, content: str):
         }
         """
         response = client.chat.completions.create(
-            model="gpt-4",
+            model=MODEL_QUIZ,
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.9,
+            temperature=TEMP_QUIZ,
             max_tokens=300
         )
 
         raw = response.choices[0].message.content.strip()
+        return validate_quiz_json(raw)
 
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            return {
-                "question": "Oops, my sass broke the JSON. Try again?",
-                "hint": "I need a reboot... or therapy.",
-                "score": 0
-            }
-    elif mode == "code":
-        prompt = f"""
-    You are Sassy Python, an overconfident AI tutor who roasts bad code and then explains it helpfully.
-
-    Roast this code first in a sarcastic tone, then give a brief explanation so even a newbie can understand.
-
-    User submitted this code:
-    {content}
-
-    Start with a roast, then a helpful breakdown.
-    """
-
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.8,
-        max_tokens=200
-    )
-
-    return response.choices[0].message.content.strip()
+    else:
+        return "Invalid mode."
 
 def generate_roast(question: str, user_answer: str, correct_answer: str) -> str:
+    """Generate a roast for a wrong quiz answer."""
     prompt = f"""
-    You are Sassy Python, an AI tutor with attitude. A user answered a quiz question incorrectly. Roast the wrong answer with humor and sarcasm, but also explain briefly why the correct answer is correct.
-    
+    You are Sassy Python, an AI tutor with attitude.
+    A user answered a quiz question incorrectly.
+    Roast their wrong answer with humor and sarcasm, then briefly explain the correct answer.
+
     Question:
     {question}
-    
-    User's answer:
-    {user_answer}
-    
-    Correct answer:
-    {correct_answer}
-    
-    Give a snarky roast response, then a helpful explanation.
-    Keep it short (under 150 words).
-    """
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.85,
-        max_tokens=200,
-    )
-    return response.choices[0].message.content.strip()
 
+    User's Answer:
+    {user_answer}
+
+    Correct Answer:
+    {correct_answer}
+
+    Keep it under 150 words.
+    """
+    return _chat(MODEL_GENERAL, prompt, 0.85)
+
+# --- API Routes ---
 @app.post("/chat")
 async def chat(req: ChatRequest):
-    response = sassy_reply(req.mode, req.content or "")
-    return {"mode": req.mode, "reply": response}
-
-from fastapi import HTTPException
+    try:
+        reply = sassy_reply(req.mode, req.content or "")
+        return {"mode": req.mode, "reply": reply}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/roast")
 async def roast(req: RoastRequest):
