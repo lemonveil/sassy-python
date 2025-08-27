@@ -216,12 +216,15 @@ with tab_code:
             st.warning("Please paste your code first.")
         else:
             reply = sassy_reply("code", code)
-            # reply is now a dict
-            st.markdown(reply.get("roast", "No roast available."))
-            if "corrected_code" in reply:
-                st.code(reply["corrected_code"], language="python")
-            if "explanation" in reply:
-                st.markdown(f"**Explanation:** {reply['explanation']}")
+
+            st.subheader("🔥 Roast")
+            st.write(reply.get("roast", "No roast available."))
+
+            st.subheader("✅ Corrected Code")
+            st.code(reply.get("corrected_code", ""), language="python")
+
+            st.subheader("💡 Explanation")
+            st.write(reply.get("explanation", "No explanation provided."))
 
 # --- Quiz tab ---
 with tab_quiz:
